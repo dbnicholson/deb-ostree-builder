@@ -1,0 +1,4 @@
+# Set all font mtimes to 0 and regenerate the fontconfig cache.
+# Important because the cache embeds directory mtimes.
+find /usr/share/fonts -exec touch -amd @0 {} \;
+fc-cache --really-force --system-only --verbose

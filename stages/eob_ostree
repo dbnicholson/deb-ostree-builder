@@ -1,0 +1,162 @@
+#!/bin/bash -ex
+# -*- mode: Shell-script; sh-basic-offset: 2; indent-tabs-mode: nil -*-
+. "${EOB_BASELIB}"
+
+# Create a minimal ostree chroot to do commits and deployments with.
+# This allows the build to be independent of the host's ostree.
+make_tmp_ostree
+
+# Delete the remote that was added to pull the latest commit. Since we
+# rsync to the remote to publish, anything in the local config file
+# would should up on the server's repo.
+cleanup_ostree_config() {
+  tmp_ostree --repo="${EOB_OSTREE_REPODIR}" remote delete --if-exists \
+    ${EOB_OSTREE_OS} ${EOB_OSTREE_INT_URL}
+}
+
+# Cleanup for using the ostree chroot.
+cleanup() {
+  cleanup_ostree_config || :
+  cleanup_tmp_ostree || :
+  eob_umount_all || :
+}
+trap cleanup EXIT
+
+# Bind mount the ostree repo, sysconfdir and install root to the same
+# locations in the ostree chroot.
+EOB_OSTREE_CHROOT="${EOB_OSTREE_TMPDIR}${EOB_OSTREE_REPODIR}"
+EOB_SYSCONF_CHROOT="${EOB_OSTREE_TMPDIR}${EOB_SYSCONFDIR}"
+EOB_ROOTDIR_CHROOT="${EOB_OSTREE_TMPDIR}${EOB_ROOTDIR}"
+mkdir -p "${EOB_OSTREE_REPODIR}" "${EOB_OSTREE_CHROOT}" \
+  "${EOB_SYSCONF_CHROOT}" "${EOB_ROOTDIR_CHROOT}"
+eob_mount --bind "${EOB_OSTREE_REPODIR}" "${EOB_OSTREE_CHROOT}"
+eob_mount --bind "${EOB_SYSCONFDIR}" "${EOB_SYSCONF_CHROOT}"
+eob_mount --bind "${EOB_ROOTDIR}" "${EOB_ROOTDIR_CHROOT}"
+eob_mount -t sysfs sysfs "${EOB_OSTREE_TMPDIR}"/sys
+eob_mount -t proc proc "${EOB_OSTREE_TMPDIR}"/proc
+eob_mount --bind /dev/pts "${EOB_OSTREE_TMPDIR}"/dev/pts
+
+if [ ! -f "${EOB_OSTREE_REPODIR}"/config ]; then
+  tmp_ostree --repo="${EOB_OSTREE_REPODIR}" init --mode archive-z2
+fi
+
+# Prune the builder's ostree to keep the local repo from growing
+# unbounded. The internal ostree server maintains the full history. Only
+# the latest commit on each ref is needed to minimize the commit size.
+tmp_ostree --repo="${EOB_OSTREE_REPODIR}" prune --refs-only --depth=0
+
+# To maintain history, pull in the latest commit from the local server.
+# Add the remote and pull in mirror mode so that the refs become the
+# local heads. Pull failures are ignored in case this is the first
+# commit for the tree.
+tmp_ostree --repo="${EOB_OSTREE_REPODIR}" remote add ${EOB_OSTREE_OS} \
+  ${EOB_OSTREE_URL} ${EOB_OSTREE_BRANCH}
+tmp_ostree --repo="${EOB_OSTREE_REPODIR}" pull --mirror \
+  ${EOB_OSTREE_OS} ${EOB_OSTREE_BRANCH} || :
+
+# Restore the original configuration to keep from polluting the remote.
+cleanup_ostree_config
+
+# The following is based on singularity-ostree-create by Collabora
+# It makes a few changes to filesystem layout required by ostree, then
+# commits it to the ostree repo.
+
+BOOT="${EOB_ROOTDIR}"/boot
+
+# Empty /dev
+recreate_dir "${EOB_ROOTDIR}"/dev
+chmod 755 "${EOB_ROOTDIR}"/dev
+
+# Remove boot/grub, part of the deployment image not of the ostree commit
+# FIXME: this was commented out in Collabora's version, done the same here
+# rm -rf "${EOB_ROOTDIR}"/boot/grub
+
+# Clean cruft
+rm -f "${BOOT}"/{initrd.img,vmlinuz}
+rm -f "${EOB_ROOTDIR}"/{initrd.img,initrd.img.old,vmlinuz,vmlinuz.old}
+
+# setup /boot for non-runtime builds
+if [ "${EOB_OSTREE_TYPE}" != runtime ]; then
+  pushd "${BOOT}"
+
+  vmlinuz_match=(vmlinuz*)
+  vmlinuz_file=${vmlinuz_match[0]}
+  initrd_match=(initrd.img* initramfs*)
+  initrd_file=${initrd_match[0]}
+
+  csum=$(cat ${vmlinuz_file} ${initrd_file} | sha256sum --binary)
+  csum=${csum#% *}
+  echo "Boot boot sum: ${csum}"
+
+  mv ${vmlinuz_file} ${vmlinuz_file}-${csum}
+  mv ${initrd_file} ${initrd_file/initrd.img/initramfs}-${csum}
+
+  popd
+fi
+
+# Fixup home directory base paths for OSTree
+sed -i -e 's|DHOME=/home|DHOME=/sysroot/home|g' "${EOB_ROOTDIR}"/etc/adduser.conf
+sed -i -e 's|# HOME=/home|HOME=/sysroot/home|g' "${EOB_ROOTDIR}"/etc/default/useradd
+
+# Setup and split out etc
+if [ -d "${EOB_ROOTDIR}"/usr/etc ]; then
+  echo "ERROR: Non-empty /usr/etc found!" >&2
+  ls -lR "${EOB_ROOTDIR}"/usr/etc
+  exit 1
+fi
+mv "${EOB_ROOTDIR}"/etc "${EOB_ROOTDIR}"/usr
+${EOB_HELPERSDIR}/split_passwd_files "${EOB_ROOTDIR}"
+
+# clear the "UNCONFIGURED FSTAB" warning from debootstrap as we don't need any entries
+# / is mounted and checked in the initramfs and our other mount points are systemd units
+: > "${EOB_ROOTDIR}"/usr/etc/fstab
+
+cat <<EOF > "${EOB_ROOTDIR}"/usr/lib/tmpfiles.d/ostree.conf
+L /var/home - - - - ../sysroot/home
+d /var/roothome 0700 root root -
+d /var/opt 0755 root root -
+d /var/local 0755 root root -
+d /run/media 0755 root root -
+EOF
+
+mkdir -p "${EOB_ROOTDIR}"/sysroot
+rm -rf "${EOB_ROOTDIR}"/{home,root,media,opt} "${EOB_ROOTDIR}"/usr/local
+ln -s /sysroot/ostree "${EOB_ROOTDIR}"/ostree
+ln -s /var/home "${EOB_ROOTDIR}"/home
+ln -s /var/roothome "${EOB_ROOTDIR}"/root
+ln -s /var/opt "${EOB_ROOTDIR}"/opt
+ln -s /var/local "${EOB_ROOTDIR}"/usr/local
+ln -s /run/media "${EOB_ROOTDIR}"/media
+
+# Convert to xdg-app runtime if necessary
+if [ "${EOB_OSTREE_TYPE}" = runtime ]; then
+  # Remove non-/usr and move to /files
+  rm -rf "${EOB_ROOTDIR}"/!(usr)
+  mv "${EOB_ROOTDIR}"/usr "${EOB_ROOTDIR}"/files
+
+  # Add in metadata
+  sed \
+    -e "s,@EOB_RUNTIME_ARCH@,${EOB_RUNTIME_ARCH},g" \
+    -e "s,@EOB_RUNTIME_BRANCH@,${EOB_RUNTIME_BRANCH},g" \
+    -e "s,@EOB_RUNTIME_MULTIARCH@,${EOB_RUNTIME_MULTIARCH},g" \
+    ${EOB_DATADIR}/${EOB_PRODUCT}-metadata > "${EOB_ROOTDIR}"/metadata
+fi
+
+echo "Commit to ostree"
+tmp_ostree --repo="${EOB_OSTREE_REPODIR}" commit \
+  --branch=${EOB_OSTREE_BRANCH} --gpg-sign=${EOB_OSTREE_KEYID} \
+  --gpg-homedir=${EOB_SYSCONFDIR}/gnupg --subject=${EOB_BUILD_VERSION} \
+  --generate-sizes --table-output "${EOB_ROOTDIR}"
+
+# Additional refs to create pointing to the branch.
+for ref in ${EOB_OSTREE_EXTRA_REFS}; do
+  [ ${ref} = ${EOB_OSTREE_BRANCH} ] && continue
+  tmp_ostree_write_refs "${EOB_OSTREE_REPODIR}" ${EOB_OSTREE_BRANCH} ${ref}
+done
+
+# All done with the tmp ostree and install root
+cleanup_tmp_ostree
+eob_umount_all
+rm -rf "${EOB_ROOTDIR}"
+
+exit 0

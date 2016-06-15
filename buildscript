@@ -1,0 +1,32 @@
+#!/bin/bash -ex
+# -*- mode: Shell-script; sh-basic-offset: 2; indent-tabs-mode: nil -*-
+# Run the eob_error stage on errors. Return code 2 is used for image
+# build failures to differentiate from locking failures.
+stage_error() {
+  eob_error
+  exit 2
+}
+trap stage_error ERR
+
+# Ensure all needed settings are available from the environment.
+for var in EOB_BASELIB EOB_TMPDIR; do
+  if [ ! -v $var ]; then
+    echo "error: required variable $var not set" >&2
+    exit 1
+  fi
+done
+
+. "${EOB_BASELIB}"
+
+exec > >(tee "${EOB_TMPDIR}"/build.txt)
+exec 2>&1
+
+# Check if build needed and exit early if not
+if eob_check_update && [ "${EOB_FORCE}" != true ]; then
+  exit 0
+fi
+
+# Real build stages
+eob_os
+eob_ostree
+eob_publish

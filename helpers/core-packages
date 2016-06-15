@@ -1,0 +1,168 @@
+#!/usr/bin/python3
+# -*- mode: Python; indent-tabs-mode: nil -*-
+
+# Find the packages that would be installed in the core. This simulates
+# a debootstrap followed by an apt installation of eos-core.
+
+import sys
+import os
+import apt
+import apt_pkg
+from tempfile import TemporaryDirectory
+
+DEFAULT_URL = 'http://ftp.us.debian.org/debian'
+DEFAULT_BRANCH = 'unstable'
+DEFAULT_ARCH = 'i386'
+DEFAULT_PLATFORM = 'i386'
+DEFAULT_COMPONENTS = ['main']
+DEFAULT_KEYRING = '/usr/share/keyrings/debian-archive-keyring.gpg'
+NEEDED_DIRS = ['etc/apt/apt.conf.d', 'etc/apt/preferences.d',
+               'etc/apt/trusted.gpg.d', 'var/lib/apt/lists/partial',
+               'var/cache/apt/archives/partial', 'var/lib/dpkg']
+
+# Apt cache filter returning only required and important packages.
+class RequiredFilter(apt.cache.Filter):
+    def apply(self, pkg):
+        if pkg.candidate is None:
+            # Assume any required packages actually have a candidate
+            # in our apt cache.
+            return False
+        priority = pkg.candidate.priority.lower()
+        if priority == 'required' or priority == 'important':
+            return True
+        else:
+            return False
+
+# Class to simulate debootstrap + apt-get install eos-core for a
+# specified arch, platform and branch.
+class CorePackages(object):
+    # Initialize apt_pkg once for the class.
+    apt_pkg.init()
+
+    def __init__(self, corepackages=[], arch=DEFAULT_ARCH,
+                 platform=DEFAULT_PLATFORM, branch=DEFAULT_BRANCH,
+                 url=DEFAULT_URL, components=DEFAULT_COMPONENTS,
+                 keyring=None, debug=False):
+        self.corepackages = corepackages
+        self.arch = arch
+        self.platform = platform
+        self.branch = branch
+        self.url = url
+        self.components = components
+        self.keyring = keyring
+        self.debug = debug
+
+        # Setup a temporary repository directory like chdist does to
+        # keep apt from interacting with the host.
+        self.temp_dir = TemporaryDirectory(prefix='repo-' + DEFAULT_ARCH + '_')
+        self.repo = self.temp_dir.name
+
+        # Create needed directories
+        for d in NEEDED_DIRS:
+            repo_dir = os.path.join(self.repo, d)
+            os.makedirs(repo_dir, exist_ok=True)
+
+        # Create sources.list
+        sources_list = os.path.join(self.repo, 'etc/apt/sources.list')
+        with open(sources_list, 'w') as f:
+            f.write('deb %s %s %s\n' %(self.url, self.branch,
+                                       ' '.join(self.components)))
+
+        # Create empty dpkg status so it looks like there are no
+        # packages installed
+        dpkg_status = os.path.join(self.repo, 'var/lib/dpkg/status')
+        with open(dpkg_status, 'w') as f:
+            pass
+
+        # Try to use a default keyring if none was specified
+        if self.keyring is None and os.path.exists(DEFAULT_KEYRING):
+            self.keyring = DEFAULT_KEYRING
+
+        # Setup configuration
+        apt_pkg.config.set('APT::Architecture', self.arch)
+        apt_pkg.config.set('Dir', self.repo)
+        apt_pkg.config.set('Dir::State::status', dpkg_status)
+        if self.keyring is not None:
+            apt_pkg.config.set('Dir::Etc::trusted', self.keyring)
+        else:
+            # If no keyring is provided, package verification will fail
+            apt_pkg.config.set('APT::Get::AllowUnauthenticated', 'true')
+        if self.debug:
+            apt_pkg.config.set('Debug::pkgDepCache::AutoInstall', 'true')
+            apt_pkg.config.set('Debug::pkgProblemResolver', 'true')
+
+        # Create updated cache with temporary configuration
+        self.cache = apt.Cache(rootdir=self.repo)
+        self.cache.update()
+        self.cache.open()
+
+    def get_packages(self):
+        # Required packages
+        required = apt.cache.FilteredCache(self.cache)
+        required.set_filter(RequiredFilter())
+
+        # Mark required packages for install without deps like debootstrap
+        with self.cache.actiongroup():
+            for pkg in required:
+                if self.debug:
+                    print('Adding required package', pkg.name,
+                          file=sys.stderr, flush=True)
+                pkg.mark_install(auto_inst=False)
+
+        # Mark core metapackage for install with deps
+        with self.cache.actiongroup():
+            for pkgname in self.corepackages:
+                pkg = self.cache[pkgname]
+                if self.debug:
+                    print('Adding core package', pkg.name,
+                          file=sys.stderr, flush=True)
+                pkg.mark_install()
+
+        # Find all packages marked for installation
+        packages = {}
+        for pkg in self.cache.get_changes():
+            # If this is a multi-arch package, use the fullname with the
+            # architecture to match output from dpkg-query.
+            multi_arch = pkg.candidate.record.get('Multi-Arch', '')
+            if multi_arch == 'same':
+                name = pkg.fullname
+            else:
+                name = pkg.shortname
+            version = pkg.candidate.version
+            packages[name] = version
+        return packages
+
+    # Make sure the temporary directory gets deleted since apt.Cache has
+    # reference counting bugs.
+    def __del__(self):
+        if self.temp_dir:
+            self.temp_dir.cleanup()
+            self.temp_dir = None
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Get core package list')
+    parser.add_argument('packages', metavar='PACKAGE', nargs='*',
+                        help='core packages to include')
+    parser.add_argument('-a', '--arch', default=DEFAULT_ARCH,
+                        help='Architecture for query')
+    parser.add_argument('-p', '--platform', default=DEFAULT_PLATFORM,
+                        help='Platform for query')
+    parser.add_argument('-b', '--branch', default=DEFAULT_BRANCH,
+                        help='Branch for query')
+    parser.add_argument('-k', '--keyring',
+                        help='GPG keyring for repository verification')
+    parser.add_argument('-d', '--debug', action='store_true',
+                        help='Debugging messages')
+    args = parser.parse_args()
+
+    core = CorePackages(corepackages=args.packages, arch=args.arch,
+                        platform=args.platform, branch=args.branch,
+                        keyring=args.keyring, debug=args.debug)
+    packages = core.get_packages()
+    sys.stderr.flush()
+
+    # Output package list like "dpkg-query -W".
+    for pkg, ver in sorted(packages.items()):
+        print(pkg, ver, sep='\t')

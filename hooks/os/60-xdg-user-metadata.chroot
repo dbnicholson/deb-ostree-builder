@@ -1,0 +1,7 @@
+# Hackish: Add user XDG metadata BUG: #1157
+
+mkdir -p /etc/skel/{.config,.cache,.dbus}
+mkdir -p /etc/skel/.local/{bin,etc,include,lib,libexec,share}
+
+mkdir -p /root/{.config,.cache,.dbus}
+mkdir -p /root/.local/{bin,etc,include,lib,libexec,share}

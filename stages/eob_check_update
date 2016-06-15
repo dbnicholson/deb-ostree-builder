@@ -1,0 +1,25 @@
+#!/bin/bash -ex
+# -*- mode: Shell-script; sh-basic-offset: 2; indent-tabs-mode: nil -*-
+. "${EOB_BASELIB}"
+
+# Get the current time.
+now=$(date +%s)
+
+# Run hooks to check or update cached files.
+mkdir -p "${EOB_CACHEDIR}"
+run_hooks cache
+
+# If there are no files in the cache directory, then there were no hooks
+# to populate the cache. Exit with an error to run a build.
+[ -z "$(ls ${EOB_CACHEDIR})" ] && exit 1
+
+# If the modification times for any files have been updated, we need to
+# do a build. Indicate this by exiting with an error.
+for file in "${EOB_CACHEDIR}"/*; do
+  modtime=$(stat -c "%Y" "$file")
+  [ $modtime -ge $now ] && exit 1
+done
+
+# No updates. Exit successfully to indicate no need for a new build.
+echo "No updates to image assets detected. Exiting."
+exit 0

@@ -1,0 +1,20 @@
+pushd "${EOB_ROOTDIR}"
+
+# Remove backup files
+rm -rf boot/*.bak etc/apt/sources.list~ etc/apt/trusted.gpg~ \
+	etc/{passwd,group,shadow,gshadow}- \
+	var/cache/debconf/*-old var/lib/dpkg/*-old
+
+# Remove dbus machine ID cache (makes each system unique)
+# This cannot be done in the packages themselves, as Jenkins sets up chroot
+# environments to run tests. Some tests start dbus services, which cannot
+# function without a machine-id.
+rm -f var/lib/dbus/machine-id etc/machine-id
+
+# Remove temporary files
+rm -rf var/cache/man/*
+rm -rf tmp var/tmp
+mkdir -p tmp var/tmp
+chmod 1777 tmp var/tmp
+
+popd

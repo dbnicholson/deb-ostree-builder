@@ -1,0 +1,38 @@
+#!/bin/bash
+set -ex
+cat <<EOF >/root/preseed
+console-setup   console-setup/codeset47 select  . Combined - Latin; Slavic Cyrillic; Greek
+console-setup   console-setup/fontface47        select  Fixed
+console-setup   console-setup/fontsize-text47   select  16
+console-setup   console-setup/charmap47 select  UTF-8
+console-setup   console-setup/codesetcode       string  Uni2
+console-setup   console-setup/store_defaults_in_debconf_db      boolean   true
+console-setup   console-setup/fontsize-fb47     select  16
+console-setup   console-setup/fontsize  string  16
+dictionaries-common dictionaries-common/default-wordlist select american
+grub-pc grub-pc/kopt_extracted  boolean false
+grub-pc grub2/kfreebsd_cmdline  string  
+grub-pc grub2/device_map_regenerated    note
+grub-pc grub2/kfreebsd_cmdline_default  string  quiet
+grub-pc grub-pc/install_devices_failed  boolean false
+grub-pc grub-pc/install_devices multiselect
+grub-pc grub-pc/postrm_purge_boot_grub  boolean false
+grub-pc grub-pc/install_devices_disks_changed   multiselect
+grub-pc grub2/linux_cmdline_default     string  
+grub-pc grub-pc/chainload_from_menu.lst boolean true
+grub-pc grub-pc/install_devices_failed_upgrade  boolean true
+grub-pc grub-pc/hidden_timeout  boolean true
+grub-pc grub2/linux_cmdline     string  
+grub-pc grub-pc/mixed_legacy_and_grub2  boolean true
+grub-pc grub-pc/install_devices_empty   boolean true
+grub-pc grub-pc/timeout string  10
+keyboard-configuration  console-setup/detect    detect-keyboard
+keyboard-configuration  console-setup/detected  note
+keyboard-configuration  console-setup/ask_detect        boolean false
+man-db  man-db/auto-update      boolean false
+nodm nodm/enabled boolean true
+nodm nodm/user string collabora
+EOF
+
+debconf-set-selections /root/preseed
+rm -f /root/preseed

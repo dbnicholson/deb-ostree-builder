@@ -1,0 +1,307 @@
+#!/usr/bin/python3
+# -*- mode: Python; coding: utf-8 -*-
+
+# Endless ostree builder
+#
+# Copyright (C) 2014-2016  Endless Mobile, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+from argparse import ArgumentParser
+import datetime
+import fnmatch
+import os
+import shutil
+import subprocess
+import sys
+
+SRCDIR = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(1, os.path.join(SRCDIR, 'lib'))
+import eob
+
+class OSTreeBuilder(object):
+    # Attributes to be exported to environment
+    CONFIG_ATTRS = [
+        'product', 'branch', 'arch', 'platform', 'force',
+        'dry_run', 'series', 'srcdir', 'datadir', 'helpersdir',
+        'builddir', 'tmpdir', 'rootdir', 'cacherootdir', 'cachedir',
+        'configdir', 'sysconfdir', 'build_version', 'outversion',
+        'tmpconfig', 'deb_host_gnu_cpu', 'deb_host_multiarch',
+        'ssh_options'
+    ]
+
+    BOOLEAN_ATTRS = [
+        'force',
+        'dry_run',
+    ]
+    SUPPORTED_ARCHES = [
+        'i386',
+        'amd64',
+        'armhf',
+    ]
+
+    # Config options that will be merged together from multiple
+    # $prefix_add_* and $prefix_del_* options. This is a list of
+    # (section, prefix) tuples.
+    CONFIG_MERGE_PREFIXES = [
+        ('cache', 'hooks'),
+        ('seed', 'hooks'),
+        ('os', 'hooks'),
+        ('os', 'packages'),
+        ('ostree', 'extra_refs'),
+        ('publish', 'hooks'),
+        ('error', 'hooks'),
+    ]
+
+    def __getattr__(self, attr):
+        """Proxy this object's attributes into the config object"""
+        if attr in self.CONFIG_ATTRS:
+            # Proxy through to the config object's default section
+            if attr in self.BOOLEAN_ATTRS:
+                return self.config.getboolean(self.config.defaultsect,
+                                              attr)
+            return self.config.get(self.config.defaultsect, attr)
+        else:
+            # Chain up for normal attribute access
+            return super().__getattribute__(attr)
+
+    def __setattr__(self, attr, value):
+        """Proxy the value to the config object"""
+        if attr in self.CONFIG_ATTRS:
+            # Proxy through to the config object's default section
+            if attr in self.BOOLEAN_ATTRS:
+                self.config.setboolean(None, attr, value)
+            else:
+                self.config.set(None, attr, value)
+        else:
+            # Chain up for normal attribute setting
+            super().__setattr__(attr, value)
+
+    def __init__(self, product, branch, arch, platform,
+                 show_config=False, force=False, dry_run=False):
+        # Create the config option first to allow the proxying between
+        # it and this object's attributes.
+        self.config = eob.OSTreeConfigParser()
+        self.product = product
+        self.branch = branch
+        self.show_config = show_config
+        self.force = force
+        self.dry_run = dry_run
+
+        # Release series. E.g., eos2.4 is in series eos2 while master is
+        # in series master.
+        self.series = self.branch.rsplit('.', 1)[0]
+
+        # Detect architecture and platform if not provided
+        if arch:
+            self.arch = arch
+        else:
+            machine = os.uname().machine
+            if machine == 'x86_64' or fnmatch.fnmatch(machine, 'i?86'):
+                self.arch = 'i386'
+            elif machine.startswith('arm'):
+                self.arch = 'armhf'
+            else:
+                raise ImageBuildError('Machine', machine, 'not supported')
+
+        if self.arch not in self.SUPPORTED_ARCHES:
+            raise ImageBuildError('Architecture', self.arch, 'not supported')
+
+        if platform:
+            self.platform = platform
+        else:
+            # Assume platform neutral arch
+            self.platform = self.arch
+
+        # Load other common settings, but use the configparser
+        # interpolation syntax. This will allow the user to override
+        # things easily.
+        self.srcdir = SRCDIR
+        self.datadir = '${srcdir}/data'
+        self.helpersdir = '${srcdir}/helpers'
+        self.builddir = eob.BUILDDIR
+        self.tmpdir = '${builddir}/tmp'
+        self.rootdir = '${builddir}/chroot'
+        self.cacherootdir = '${builddir}/cache'
+        self.cachedir = '${cacherootdir}/${product}-${branch}-${arch}-${platform}'
+        self.configdir = '${srcdir}/config'
+        self.sysconfdir = eob.SYSCONFDIR
+        self.build_version = datetime.datetime.now().strftime('%y%m%d-%H%M%S')
+        self.outversion = '${product}-${branch}-${arch}-${platform}.${build_version}'
+        self.tmpconfig = '${tmpdir}/config.ini'
+        self.ssh_options = '-o StrictHostKeyChecking=no'
+
+        # Pull in dpkg-architecture settings that are needed for the
+        # xdg-app runtimes.
+        gnu_cpu = subprocess.check_output(['dpkg-architecture',
+                                           '-a' + self.arch,
+                                           '-qDEB_HOST_GNU_CPU'])
+        self.deb_host_gnu_cpu = gnu_cpu.decode().strip()
+        multiarch = subprocess.check_output(['dpkg-architecture',
+                                             '-a' + self.arch,
+                                             '-qDEB_HOST_MULTIARCH'])
+        self.deb_host_multiarch = multiarch.decode().strip()
+
+    def configure(self):
+        """Build settings from configuration files"""
+        # Build up a list of config files to load. The order goes like so:
+        #
+        # 1. Default settings - $configdir/defaults.ini.
+        # 2. Product, branch, arch and platform settings.
+        #    These are in $configdir subdirectories. For example,
+        #    $configdir/product/$product.ini.
+        # 3. System config settings - $sysconfdir/config.ini.
+        # 4. Local user settings - $configdir/local.ini.
+        config_files = [
+            os.path.join(self.configdir, 'defaults.ini'),
+            os.path.join(self.configdir, 'product', self.product + '.ini'),
+            os.path.join(self.configdir, 'branch', self.branch + '.ini'),
+            os.path.join(self.configdir, 'arch', self.arch + '.ini'),
+            os.path.join(self.configdir, 'platform', self.platform + '.ini'),
+            os.path.join(self.sysconfdir, 'config.ini'),
+            os.path.join(self.configdir, 'local.ini'),
+        ]
+        for path in self.config.read(config_files):
+            print('Loaded configuration file', path)
+
+        # Handle merged key prefixes
+        for section, prefix in self.CONFIG_MERGE_PREFIXES:
+            self.config.merge_option_prefix(section, prefix)
+
+    def setenv(self, section, option, value):
+        """Export config values as variable in EIB namespace"""
+        # Convert boolean's to true/false to be handled easily in shell
+        if value in ['True', 'False']:
+            value = value.lower()
+        var = 'EOB_'
+        if section:
+            var += section.upper() + '_'
+        var += option.upper()
+        os.environ[var] = value
+
+    def set_environment(self):
+        """Setup environment variables for stages and hooks"""
+        # Standard builder environment
+        os.environ['EOB_BASELIB'] = os.path.join(SRCDIR, 'lib/eob.sh')
+        os.environ['PATH'] = '%s:%s' %(os.path.join(SRCDIR, 'stages'),
+                                       os.environ['PATH'])
+        pypath = os.path.join(SRCDIR, 'lib')
+        if 'PYTHONPATH' in os.environ:
+            os.environ['PYTHONPATH'] = '%s:%s' %(pypath,
+                                                 os.environ['PYTHONPATH'])
+        else:
+            os.environ['PYTHONPATH'] = pypath
+
+        # Clean language settings
+        os.environ['LANG'] = 'C'
+        for langenv in ['LANGUAGE', 'LC_CTYPE', 'LC_NUMERIC', 'LC_TIME',
+                        'LC_COLLATE', 'LC_MONETARY', 'LC_MESSAGES',
+                        'LC_PAPER', 'LC_NAME', 'LC_ADDRESS', 'LC_TELEPHONE',
+                        'LC_MEASUREMENT', 'LC_IDENTIFICATION', 'LC_ALL']:
+            if langenv in os.environ:
+                del os.environ[langenv]
+
+        # Build specific environment attributes.
+        for option, value in self.config.items(self.config.defaultsect):
+            self.setenv(None, option, value)
+        for sect in self.config.sections():
+            for option, value in self.config.items_no_default(sect):
+                self.setenv(sect, option, value)
+
+    def prep_builddir(self):
+        """Cleanup the scratch space and prep for a new build"""
+        # If the scratch space exists, unmount any filesystems in it and
+        # make all paths mutable.
+        if os.path.isdir(self.builddir):
+            # Fully resolve the build path to match what's in the mount
+            # info
+            print('Cleaning up mounts in', self.builddir, flush=True)
+            realdir = os.path.realpath(self.builddir)
+            mounts = []
+            with open('/proc/mounts') as mountf:
+                for line in mountf:
+                    mountdir = line.split()[1]
+                    # Search for all mounts that begin with $builddir/.
+                    # The trailing / is added for 2 reasons.
+                    #
+                    # 1. It makes sure that $builddir itself is not
+                    # matched. If someone has mounted the build
+                    # directory itself, that was probably done
+                    # intentionally and wasn't done by the builder.
+                    #
+                    # 2. It ensures that only paths below $builddir are
+                    # matched and not $builddir-backup or anything else
+                    # that begins with the same characters.
+                    if mountdir.startswith(self.builddir + '/'):
+                        # Prepend to the list so submounts are at the
+                        # beginning of the list
+                        mounts.insert(0, mountdir)
+
+            for path in mounts:
+                subprocess.check_call(['umount', path])
+
+        # Cleanup files from previous build
+        print('Recreating build specific directories', flush=True)
+        eob.recreate_dir(self.rootdir)
+        eob.recreate_dir(self.tmpdir)
+
+    def create_tmp_config(self):
+        """Take the merged configuration and output it to a single file
+        in the tmp directory.
+        """
+        with open(self.tmpconfig, 'w') as out:
+            out.write('# Configuration for %s\n' % self.outversion)
+            self.config.write(out)
+
+    def run(self):
+        print('Configuring ostree build', flush=True)
+        self.configure()
+
+        # Always show the configuration since it's not stored anywhere
+        # after the build
+        self.config.write(sys.stdout)
+
+        # If --show-config is in use, we're done
+        if self.show_config:
+            return
+
+        print('Preparing build directory', flush=True)
+        self.prep_builddir()
+        print('Exporting configuration to environment', flush=True)
+        self.set_environment()
+        print('Output merged configuration file to', self.tmpconfig,
+              flush=True)
+        self.create_tmp_config()
+
+        # Run the buildscript
+        print('Running image buildscript', flush=True)
+        subprocess.check_call([os.path.join(self.srcdir, 'buildscript')])
+
+def main():
+    aparser = ArgumentParser(description='Build and publish ostrees for Debian')
+    eob.add_cli_options(aparser)
+    args = aparser.parse_args()
+
+    builder = OSTreeBuilder(product=args.product,
+                            branch=args.branch,
+                            arch=args.arch,
+                            platform=args.platform,
+                            show_config=args.show_config,
+                            force=args.force,
+                            dry_run=args.dry_run)
+    builder.run()
+
+if __name__ == '__main__':
+    main()

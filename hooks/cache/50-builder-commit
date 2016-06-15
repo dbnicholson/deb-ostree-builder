@@ -1,0 +1,12 @@
+# Check if the image builder code has been updated.
+commit_file="${EOB_CACHEDIR}"/commit
+
+# Get the previous and current commit hashes.
+prev_commit=
+[ -f "${commit_file}" ] && prev_commit=$(<"${commit_file}")
+cur_commit=$(git rev-list --max-count=1 HEAD -- .)
+
+# Update the commit file if necessary.
+if [ -z "${prev_commit}" -o "${cur_commit}" != "${prev_commit}" ]; then
+  echo "${cur_commit}" > "${commit_file}"
+fi

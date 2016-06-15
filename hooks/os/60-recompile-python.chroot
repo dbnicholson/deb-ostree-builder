@@ -1,0 +1,19 @@
+# Reset python file atime/mtime to 0 and recompile
+
+shopt -s nullglob
+
+# Python2 files
+for PYTHON2_PATH in /usr/lib/pymodules/python2.7 /usr/lib/python2.7 /usr/share/python; do
+  if [ -d ${PYTHON2_PATH} ]; then
+    find ${PYTHON2_PATH} | xargs touch -amd @0
+    python2 -m compileall ${PYTHON2_PATH}
+  fi
+done
+
+# Python3 files
+for PYTHON3_PATH in /usr/lib/python3.* /usr/share/python3; do
+  if [ -d ${PYTHON3_PATH} ]; then
+    find ${PYTHON3_PATH} | xargs touch -amd @0
+    python3 -m compileall ${PYTHON3_PATH}
+  fi
+done

@@ -1,0 +1,2 @@
+# Update the apt cache to ensure we have signed release files
+apt-get update

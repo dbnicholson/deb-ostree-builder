@@ -1,0 +1,34 @@
+# Generate locales listed at /etc/locales/supported.d/local
+# Supported locales listed at /usr/share/i18n/SUPPORTED
+
+echo "I: Regenerate locales"
+if [ -f /usr/share/i18n/SUPPORTED -a -s /usr/share/i18n/SUPPORTED ]; then
+  cp /usr/share/i18n/SUPPORTED /etc/locales/supported.d/local
+else
+  cat >/etc/locales/supported.d/local<<'EOF'
+ar_AE.UTF-8 UTF-8
+ar_BH.UTF-8 UTF-8
+ar_DZ.UTF-8 UTF-8
+ar_EG.UTF-8 UTF-8
+ar_IQ.UTF-8 UTF-8
+ar_JO.UTF-8 UTF-8
+ar_KW.UTF-8 UTF-8
+ar_LB.UTF-8 UTF-8
+ar_LY.UTF-8 UTF-8
+ar_MA.UTF-8 UTF-8
+ar_OM.UTF-8 UTF-8
+ar_QA.UTF-8 UTF-8
+ar_SA.UTF-8 UTF-8
+ar_SD.UTF-8 UTF-8
+ar_SY.UTF-8 UTF-8
+ar_TN.UTF-8 UTF-8
+ar_YE.UTF-8 UTF-8
+en_US.UTF-8 UTF-8
+es_ES.UTF-8 UTF-8
+es_GT.UTF-8 UTF-8
+es_MX.UTF-8 UTF-8
+pt_BR.UTF-8 UTF-8
+EOF
+fi
+
+/usr/sbin/locale-gen

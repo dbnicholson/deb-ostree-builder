@@ -1,0 +1,1 @@
+echo "BUILD_ID=\"${EOB_PRODUCT}-${EOB_BUILD_VERSION}\"" >> "${EOB_ROOTDIR}"/etc/os-release

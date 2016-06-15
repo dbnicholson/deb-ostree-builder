@@ -1,0 +1,129 @@
+#!/usr/bin/env python
+# Taken from Collabora's singularity-ostree-create
+# Sorts out users/groups/passwds for an ostree-based distro
+
+import shutil
+import sys
+import os
+
+rootdir = sys.argv[1]
+
+# Copy first so it keeps the same permissions
+shutil.copy (os.path.join (rootdir, "usr", "etc", "passwd"),
+    os.path.join (rootdir, "lib", "passwd"))
+shutil.copy (os.path.join (rootdir, "usr", "etc", "group"),
+    os.path.join (rootdir, "lib", "group"))
+
+# Get the range of non-system user and group IDs from login.defs. Use a
+# range of 1000 to 65534 (nobody) - 1 as default.
+id_limits = { "UID_MIN" : 1000,
+              "UID_MAX" : 65534 - 1,
+              "GID_MIN" : 1000,
+              "GID_MAX" : 65534 - 1
+          }
+with open(os.path.join(rootdir, "usr", "etc", "login.defs")) as defs:
+    data = defs.read()
+    for line in data.split("\n"):
+        pieces = line.split()
+        # skip empty lines
+        if len(pieces) < 2:
+            continue
+        # skip comments
+        if pieces[0][0] == '#':
+            continue
+        # update values when keys found
+        if pieces[0] in id_limits:
+            id_limits[pieces[0]] = int(pieces[1])
+
+# Non-system users and certain special cases should go in
+# /usr/etc/passwd. This is typically users between 1000 and 65534
+# (nobody), but we also include root.
+content = open(os.path.join (rootdir, "usr", "etc", "passwd")).read()
+etcpasswd = open (os.path.join (rootdir, "usr", "etc", "passwd"), "w")
+libpasswd = open (os.path.join (rootdir, "lib", "passwd"), "w")
+etcpasswd.truncate(0)
+libpasswd.truncate(0)
+
+ETCUSERS = [ "root" ]
+for line in content.split("\n"):
+    pieces = line.split(":")
+    # skip empty lines
+    if len(pieces) < 2:
+        continue
+    user = pieces[0]
+    uid = int(pieces[2])
+    # 65534 is nobody
+    if user in ETCUSERS:
+        etcpasswd.write(line + "\n")
+    elif uid >= id_limits["UID_MIN"] and uid <= id_limits["UID_MAX"]:
+        etcpasswd.write(line + "\n")
+        ETCUSERS.append(user)
+
+    # always add the user to /lib/passwd with no password as a fallback
+    pieces[1] = "*"
+    libpasswd.write (":".join(pieces) + "\n")
+etcpasswd.close()
+libpasswd.close()
+
+# Remove shadow entries for users not in /usr/etc/passwd.
+# TODO should really check if there are system users in there with a
+# password.
+content = open(os.path.join (rootdir, "usr", "etc", "shadow")).read()
+shadow = open (os.path.join (rootdir, "usr", "etc", "shadow"), "w")
+shadow.truncate(0)
+for line in content.split("\n"):
+    pieces = line.split(":")
+    # skip empty lines
+    if len(pieces) < 2:
+        continue
+    user = pieces[0]
+    if user in ETCUSERS:
+        shadow.write(line + "\n")
+shadow.close()
+
+# Non-system groups and certain special cases should go in
+# /usr/etc/group. This is typically groups between 1000 and 65534
+# (nobody), but we also include a few other groups that may be modified
+# to include standard user accounts.
+content = open(os.path.join (rootdir, "usr", "etc", "group")).read()
+etcgroup = open (os.path.join (rootdir, "usr", "etc", "group"), "w")
+libgroup = open (os.path.join (rootdir, "lib", "group"), "w")
+
+etcgroup.truncate()
+libgroup.truncate()
+
+ETCGROUPS = [ "root", "plugdev", "staff", "audio", "video", "sudo",
+              "adm", "lpadmin", "admin", "systemd-journal" ]
+for line in content.split("\n"):
+    pieces = line.split(":")
+    if len(pieces) < 2:
+        continue
+    group = pieces[0]
+    gid = int(pieces[2])
+    if group in ETCGROUPS:
+        etcgroup.write(line + "\n")
+    elif gid >= id_limits["GID_MIN"] and gid <= id_limits["GID_MAX"]:
+        etcgroup.write(line + "\n")
+        ETCGROUPS.append(group)
+
+    # Always add the group to /lib/group with no password as a fallback
+    pieces[1] = "*"
+    libgroup.write(":".join(pieces) + "\n")
+etcgroup.close()
+libgroup.close()
+
+# Remove shadow entries for users not in /usr/etc/group.
+# TODO should really check if there are system groups in there with a
+# password.
+content = open(os.path.join (rootdir, "usr", "etc", "gshadow")).read()
+gshadow = open (os.path.join (rootdir, "usr", "etc", "gshadow"), "w")
+gshadow.truncate(0)
+for line in content.split("\n"):
+    pieces = line.split(":")
+    # skip empty lines
+    if len(pieces) < 2:
+        continue
+    group = pieces[0]
+    if group in ETCGROUPS:
+        gshadow.write(line + "\n")
+gshadow.close()

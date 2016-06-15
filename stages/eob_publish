@@ -1,0 +1,8 @@
+#!/bin/bash -ex
+# -*- mode: Shell-script; sh-basic-offset: 2; indent-tabs-mode: nil -*-
+. "${EOB_BASELIB}"
+
+# Don't publish for a dry run.
+[ "${EOB_DRY_RUN}" = true ] && exit 0
+
+run_hooks publish

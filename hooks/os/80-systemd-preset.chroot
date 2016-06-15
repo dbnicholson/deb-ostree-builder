@@ -1,0 +1,12 @@
+# Systemd runs the equivalent of "systemctl preset-all" on firstboot.
+# Also run that here so that systemd units are enabled or disabled
+# equivalently for ostree upgrades. This also ensures that the correct
+# symlinks are recorded in /etc/systemd/system in the ostree commit and
+# don't show up as local modifications.
+#
+# The --force option lets systemctl overwrite existing symlinks that
+# point to a different path. This happens often as packages will create
+# the symlinks pointing to /lib/systemd/system while systemctl will
+# use /usr/lib/systemd/system in accordance with our /usr merge.
+
+systemctl --force preset-all

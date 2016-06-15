@@ -1,0 +1,4 @@
+# If there was an error, clear the cache directory so that the subsequent
+# build doesn't think this one succeeded.
+
+rm -rf "${EOB_CACHEDIR}"

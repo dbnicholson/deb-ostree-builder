@@ -1,0 +1,15 @@
+# Get the list of core packages from apt and compare them to the
+# previous build.
+
+# Fetch the current core package list.
+cur_pkgs="${EOB_TMPDIR}"/packages
+keyring=$(eob_keyring)
+${EOB_HELPERSDIR}/core-packages -a ${EOB_ARCH} -p ${EOB_PLATFORM} \
+  -b ${EOB_BRANCH} -k "${keyring}" ${EOB_OS_PACKAGES} > "${cur_pkgs}"
+
+# Compare to the cached package list and update if changed.
+prev_pkgs="${EOB_CACHEDIR}"/packages
+if [ ! -f "${prev_pkgs}" ] || ! diff -u "${cur_pkgs}" "${prev_pkgs}"; then
+  echo "Packages updated since previous build"
+  cp -f "${cur_pkgs}" "${prev_pkgs}"
+fi

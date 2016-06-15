@@ -1,0 +1,107 @@
+#!/usr/bin/python3
+# -*- mode: Python; coding: utf-8 -*-
+
+# Endless ostree build runner
+#
+# Copyright (C) 2014-2016  Endless Mobile, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+from argparse import ArgumentParser
+import errno
+import fcntl
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+MYDIR = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(1, os.path.join(MYDIR, 'lib'))
+import eob
+
+LOCKTIMEOUT = 60
+
+def set_close_on_exec(fd):
+    flags = fcntl.fcntl(fd, fcntl.F_GETFD)
+    flags |= fcntl.FD_CLOEXEC
+    fcntl.fcntl(fd, fcntl.F_SETFD, flags)
+
+def lock_builder(lockf, timeout):
+    wait = timeout
+    while True:
+        try:
+            # Grab the lock exclusively non-blocking
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except IOError as err:
+            if err.errno in [errno.EACCES, errno.EAGAIN]:
+                if wait == timeout:
+                    lockpid = lockf.read().strip()
+                    print(LOCKFILE, 'currently locked by pid', lockpid,
+                          file=sys.stderr)
+                wait -= 1
+                if wait <= 0:
+                    raise Exception('Could not lock file %s' % LOCKFILE)
+                time.sleep(1)
+            else:
+                # Some other issue
+                raise
+
+    # Write this pid into the lock file
+    lockf.truncate()
+    lockf.write('%d\n' % os.getpid())
+    lockf.flush()
+
+# This option list must stay in sync with run-build. It's repeated here
+# so that the branch to checkout can be reliably determined.
+aparser = ArgumentParser(description='Build and publish images for Debian')
+eob.add_cli_options(aparser)
+args = aparser.parse_args()
+
+# Open the lock file a+ so it can be RW without truncating, but seek to
+# the beginning to either read or write the whole file.
+os.makedirs(os.path.dirname(eob.LOCKFILE), exist_ok=True)
+with open(eob.LOCKFILE, 'a+') as lf:
+    lf.seek(0)
+    lock_builder(lf, args.lock_timeout)
+
+    # Set the close-on-exec bit so the lock file isn't inherited by
+    # child processes. This isn't actually required since subprocess
+    # will close all fds except stdin/out/err by default, but let's be
+    # safe.
+    set_close_on_exec(lf.fileno())
+
+    # Setup the real builder to run
+    os.chdir(MYDIR)
+    if not args.no_checkout:
+        # Make a copy of the repo to use. A real git repo is needed
+        # since the build later queries the current commit.
+        srcdir = os.path.join(eob.BUILDDIR, 'src')
+        shutil.rmtree(srcdir, ignore_errors=True)
+        os.makedirs(eob.BUILDDIR, exist_ok=True)
+        shutil.copytree(MYDIR, srcdir, symlinks=True)
+        os.chdir(srcdir)
+
+        # Fetch the current code before launching the actual build.
+        # Assume that if the job is running from jenkins that it has
+        # already fetched the latest.
+        if 'JENKINS_HOME' not in os.environ:
+            subprocess.check_call(['git', 'fetch', 'origin'])
+        subprocess.check_call(['git', 'checkout', 'origin/' + args.branch])
+        subprocess.check_call(['git', 'clean', '-xdf'])
+
+    # Run the real builder
+    subprocess.check_call(['./run-build'] + sys.argv[1:])

@@ -1,0 +1,54 @@
+#!/bin/bash -ex
+# -*- mode: Shell-script; sh-basic-offset: 2; indent-tabs-mode: nil -*-
+. "${EOB_BASELIB}"
+
+recreate_dir "${EOB_ROOTDIR}"
+run_hooks seed "${EOB_ROOTDIR}"
+
+# FIXME: write own debootstrap script to make image more minimal
+keyring=$(eob_keyring)
+debootstrap --arch=${EOB_ARCH} --keyring="${keyring}" \
+  --components="${EOB_OS_COMPONENTS}" ${EOB_BRANCH} "${EOB_ROOTDIR}" \
+  "${EOB_OS_REPO}" "${EOB_DATADIR}"/debootstrap.script
+
+cleanup() {
+  eob_umount_all || :
+}
+trap cleanup EXIT
+
+eob_mount -t sysfs sysfs "${EOB_ROOTDIR}"/sys
+eob_mount -t proc proc "${EOB_ROOTDIR}"/proc
+eob_mount --bind /dev/pts "${EOB_ROOTDIR}"/dev/pts
+
+# Don't let packages start daemons. From invoke-rc.d(8), exiting 101
+# from an optional policy-rc.d says not to try and start daemons.
+mv "${EOB_ROOTDIR}"/sbin/start-stop-daemon{,.orig}
+ln -s /bin/true "${EOB_ROOTDIR}"/sbin/start-stop-daemon
+cat > "${EOB_ROOTDIR}"/usr/sbin/policy-rc.d <<EOF
+#!/bin/sh
+exit 101
+EOF
+chmod +x "${EOB_ROOTDIR}"/usr/sbin/policy-rc.d
+
+# Avoid sync() after each package install
+echo "force-unsafe-io" > "${EOB_ROOTDIR}"/etc/dpkg/dpkg.cfg.d/image-build
+
+# Make sure debconf runs noninteractively like deboostrap
+DEBIAN_FRONTEND=noninteractive
+DEBCONF_NONINTERACTIVE_SEEN=true
+export DEBIAN_FRONTEND DEBCONF_NONINTERACTIVE_SEEN
+
+# Install packages and other things via hooks
+run_hooks os "${EOB_ROOTDIR}"
+
+# Cleanup
+chroot "${EOB_ROOTDIR}" apt-get clean
+
+# Revert hacks made above
+rm -f "${EOB_ROOTDIR}"/etc/dpkg/dpkg.cfg.d/image-build
+rm -f "${EOB_ROOTDIR}"/sbin/start-stop-daemon
+rm -f "${EOB_ROOTDIR}"/usr/sbin/policy-rc.d
+mv "${EOB_ROOTDIR}"/sbin/start-stop-daemon{.orig,}
+
+# Unmount kernel filesystems
+eob_umount_all
