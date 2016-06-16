@@ -1,0 +1,57 @@
+#!/bin/bash -ex
+# -*- mode: Shell-script; sh-basic-offset: 2; indent-tabs-mode: nil -*-
+
+## Fill these in
+# Where the ostree repo to pull from is
+EIB_OSTREE_REPODIR=/var/cache/deb-ostree-builder/ostree/debian
+
+# Where the checkout of the tree goes
+EIB_OSTREE_SYSROOT=$(mktemp -d -p /var/tmp ostree-deploy.XXXXXXXXXX)
+
+# Name of the OS for ostree deployment
+EIB_OSTREE_OS=debian
+
+# The ostree remote URL in installed configuration
+EIB_OSTREE_URL=http://www.example.com/ostree
+
+# The ostree remote branch
+EIB_OSTREE_BRANCH_DEPLOY=unstable
+
+REPOPATH=${EIB_OSTREE_SYSROOT}/ostree/repo
+BOOT=${EIB_OSTREE_SYSROOT}/boot
+
+ostree admin init-fs "${EIB_OSTREE_SYSROOT}"
+ostree admin --sysroot="${EIB_OSTREE_SYSROOT}" os-init ${EIB_OSTREE_OS}
+ostree --repo="${REPOPATH}" remote add ${EIB_OSTREE_OS} ${EIB_OSTREE_URL} \
+  ${EIB_OSTREE_BRANCH_DEPLOY}
+ostree --repo="${REPOPATH}" pull-local --disable-fsync \
+  --remote=${EIB_OSTREE_OS} ${EIB_OSTREE_REPODIR} ${EIB_OSTREE_BRANCH_DEPLOY}
+
+# Basic bootloader setup
+if [[ "${EIB_ARCH}" == "armhf" ]]; then
+  mkdir -p "${BOOT}"/loader.0
+  ln -s loader.0 "${BOOT}"/loader
+  # Empty uEnv.txt otherwise ostree gets upset
+  > "${BOOT}"/loader/uEnv.txt
+  ln -s loader/uEnv.txt "${BOOT}"/uEnv.txt
+else
+  # Assume grub for all other architectures
+  mkdir -p "${BOOT}"/grub
+  # This is entirely using Boot Loader Spec (bls). A more general
+  # grub.cfg is likely needed
+  cat > "${BOOT}"/grub/grub.cfg <<"EOF"
+insmod blscfg
+bls_import
+set default='0'
+EOF
+fi
+
+# Deploy with root=UUID random
+uuid=$(uuidgen)
+kargs=(--karg=root=UUID=${uuid} --karg=rw --karg=splash \
+    --karg=plymouth.ignore-serial-consoles --karg=quiet)
+ostree admin --sysroot="${EIB_OSTREE_SYSROOT}" deploy \
+  --os=${EIB_OSTREE_OS} "${kargs[@]}" \
+  ${EIB_OSTREE_OS}:${EIB_OSTREE_BRANCH_DEPLOY}
+
+# Now $EIB_OSTREE_SYSROOT is ready to be written to some disk
