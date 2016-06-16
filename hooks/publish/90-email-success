@@ -1,4 +1,5 @@
 # Email announcing successful image build
+[ -n "$EOB_EMAIL_TO" ] || exit 0
 
 sendmail $EOB_EMAIL_TO <<EOF
 From: $EOB_EMAIL_FROM
