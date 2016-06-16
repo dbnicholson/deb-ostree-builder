@@ -143,10 +143,19 @@ if [ "${EOB_OSTREE_TYPE}" = runtime ]; then
 fi
 
 echo "Commit to ostree"
-tmp_ostree --repo="${EOB_OSTREE_REPODIR}" commit \
-  --branch=${EOB_OSTREE_BRANCH} --gpg-sign=${EOB_OSTREE_KEYID} \
-  --gpg-homedir=${EOB_SYSCONFDIR}/gnupg --subject=${EOB_BUILD_VERSION} \
-  --generate-sizes --table-output "${EOB_ROOTDIR}"
+COMMIT_ARGS=(
+  --branch=${EOB_OSTREE_BRANCH}
+  --subject=${EOB_BUILD_VERSION}
+  --table-output
+)
+if [ -n "${EOB_OSTREE_KEYID}" ]; then
+    COMMIT_ARGS+=(
+      --gpg-sign=${EOB_OSTREE_KEYID}
+      --gpg-homedir=${EOB_SYSCONFDIR}/gnupg
+    )
+fi
+tmp_ostree --repo="${EOB_OSTREE_REPODIR}" commit "${COMMIT_ARGS[@]}" \
+  "${EOB_ROOTDIR}"
 
 # Additional refs to create pointing to the branch.
 for ref in ${EOB_OSTREE_EXTRA_REFS}; do
