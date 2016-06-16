@@ -49,10 +49,12 @@ tmp_ostree --repo="${EOB_OSTREE_REPODIR}" prune --refs-only --depth=0
 # Add the remote and pull in mirror mode so that the refs become the
 # local heads. Pull failures are ignored in case this is the first
 # commit for the tree.
-tmp_ostree --repo="${EOB_OSTREE_REPODIR}" remote add ${EOB_OSTREE_OS} \
-  ${EOB_OSTREE_URL} ${EOB_OSTREE_BRANCH}
-tmp_ostree --repo="${EOB_OSTREE_REPODIR}" pull --mirror \
-  ${EOB_OSTREE_OS} ${EOB_OSTREE_BRANCH} || :
+if [ -n "${EOB_OSTREE_URL}" ]; then
+  tmp_ostree --repo="${EOB_OSTREE_REPODIR}" remote add ${EOB_OSTREE_OS} \
+    ${EOB_OSTREE_URL} ${EOB_OSTREE_BRANCH}
+  tmp_ostree --repo="${EOB_OSTREE_REPODIR}" pull --mirror \
+    ${EOB_OSTREE_OS} ${EOB_OSTREE_BRANCH} || :
+fi
 
 # Restore the original configuration to keep from polluting the remote.
 cleanup_ostree_config
