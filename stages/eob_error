@@ -1,5 +1,0 @@
-#!/bin/bash -x
-# -*- mode: Shell-script; sh-basic-offset: 2; indent-tabs-mode: nil -*-
-. "${EOB_BASELIB}"
-
-run_hooks error

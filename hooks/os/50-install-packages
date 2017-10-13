@@ -1,2 +1,0 @@
-# Install any extra packages
-pkg_install ${EOB_OS_PACKAGES}

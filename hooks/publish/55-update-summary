@@ -1,4 +1,0 @@
-# Update the summary file remotely on the internal server
-[ -n "${EOB_OSTREE_HOST}" ] || exit 0
-ssh ${EOB_SSH_OPTIONS} ${EOB_OSTREE_USER}@${EOB_OSTREE_HOST} \
-  ostree --repo="${EOB_OSTREE_REMOTEDIR}" summary --update

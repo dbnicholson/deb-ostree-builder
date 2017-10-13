@@ -1,6 +1,0 @@
-# Publish ostree to internal server. Option --delete is not used because
-# the builder may not have the full history.
-[ -n "${EOB_OSTREE_HOST}" ] || exit 0
-rsync -aiv --delay-updates -e "ssh ${EOB_SSH_OPTIONS}" \
-  "${EOB_OSTREE_REPODIR}/" \
-  "${EOB_OSTREE_USER}@${EOB_OSTREE_HOST}:${EOB_OSTREE_REMOTEDIR}"

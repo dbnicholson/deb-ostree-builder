@@ -1,2 +1,0 @@
-echo "127.0.1.1 debian" >> "${EOB_ROOTDIR}"/etc/hosts
-echo "debian" > "${EOB_ROOTDIR}"/etc/hostname

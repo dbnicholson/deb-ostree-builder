@@ -1,0 +1,39 @@
+[general]
+# Set this to the architecture matching that passed to deb-ostree-builder
+arch=amd64
+cleanup=true
+aptsources=debian debian-updates debian-security dbn
+bootstrap=debian debian-updates debian-security dbn
+
+[debian]
+# Dracut expects the halt/poweroff/reboot utilities
+packages=systemd-sysv
+# Generally useful packages
+packages=bash apt strace less
+# Arch specific kernel and bootloader. Obviously, this is only valid
+# for amd64.
+packages=linux-image-amd64 grub-pc
+source=http://cdn-aws.deb.debian.org/debian
+keyring=debian-archive-keyring
+suite=stretch
+
+[debian-updates]
+packages=
+source=http://cdn-aws.deb.debian.org/debian
+suite=stretch-updates
+
+[debian-security]
+packages=
+source=http://security.debian.org
+suite=stretch/updates
+
+# Hopefully this can go away when ostree-boot is available directly
+# from debian's ostree package.
+[dbn]
+packages=ostree-boot
+# Multistrap does not do merged /usr itself, so usrmerge is needed.
+# Unfortunately, it's not available in stretch.
+packages=usrmerge
+source=https://deb-ostree-test.endlessm.com/debian
+keyring=dbn-test-archive-keyring
+suite=stretch
