@@ -17,4 +17,9 @@ rm -rf tmp var/tmp
 mkdir -p tmp var/tmp
 chmod 1777 tmp var/tmp
 
+
+if [ -c var/lib/dracut/console-setup-dir/etc/console-setup/null ];then
+  rm var/lib/dracut/console-setup-dir/etc/console-setup/null
+fi
+
 popd

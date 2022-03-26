@@ -1,0 +1,20 @@
+# build an initramfs using dracut
+
+rm -f /boot/{initrd.img,vmlinuz}
+rm -f {initrd.img,initrd.img.old,vmlinuz,vmlinuz.old}
+rm -f boot/{initrd.img.old,vmlinuz.old}
+
+if [ "${EOB_OSTREE_TYPE}" != runtime ]; then
+  kernelversion=`ls /lib/modules`
+  if [ -z "$kernelversion" ]; then
+     echo "cannot find the kernel modules"
+     exit 1
+  fi
+
+  pushd "/boot"
+  initrd_match=(initrd.img* initramfs*)
+  initrd_file=${initrd_match[0]}
+  /usr/bin/dracut --reproducible --gzip -v --add ostree --tmpdir=/tmp -f ${initrd_file} --no-hostonly --kver $kernelversion
+
+  popd
+fi
