@@ -98,6 +98,10 @@ eob_keyring() {
   local -a keys
   local keyshome key
 
+  if [ "${EOB_PRODUCT}" == "ubuntu" ]; then
+    local keyring="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+  fi
+
   # Create the keyring if necessary
   if [ ! -f "${keyring}" ]; then
     # Check that there are keys
@@ -175,6 +179,10 @@ make_tmp_ostree() {
   # debootstrap can't deal with the optional dependency on
   # pinentry-gtk2 | pinentry-curses | pinentry correctly.
   packages+=",pinentry-curses"
+
+  if [ "${EOB_PRODUCT}" == "ubuntu" ]; then
+    packages+=",dbus-x11"
+  fi
 
   recreate_dir "${EOB_OSTREE_TMPDIR}"
   keyring=$(eob_keyring)

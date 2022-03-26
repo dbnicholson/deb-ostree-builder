@@ -123,12 +123,14 @@ EOF
 
 mkdir -p "${EOB_ROOTDIR}"/sysroot
 rm -rf "${EOB_ROOTDIR}"/{home,root,media,opt} "${EOB_ROOTDIR}"/usr/local
-ln -s /sysroot/ostree "${EOB_ROOTDIR}"/ostree
-ln -s /var/home "${EOB_ROOTDIR}"/home
-ln -s /var/roothome "${EOB_ROOTDIR}"/root
-ln -s /var/opt "${EOB_ROOTDIR}"/opt
-ln -s /var/local "${EOB_ROOTDIR}"/usr/local
-ln -s /run/media "${EOB_ROOTDIR}"/media
+pushd ${EOB_ROOTDIR}
+ln -s /sysroot/ostree ostree
+ln -s /var/home home
+ln -s /var/roothome root
+ln -s /var/opt opt
+ln -s /var/local usr/local
+ln -s /run/media media
+popd
 
 # Convert to xdg-app runtime if necessary
 if [ "${EOB_OSTREE_TYPE}" = runtime ]; then

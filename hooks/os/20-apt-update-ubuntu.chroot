@@ -1,0 +1,2 @@
+echo "deb http://archive.ubuntu.com/ubuntu/ focal-updates main" >> /etc/apt/sources.list
+apt-get update
